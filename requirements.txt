@@ -1,0 +1,10 @@
+# Core dependencies
+pyyaml>=6.0
+bpy>=3.6.0  # Blender as a Python module (optional, for headless rendering)
+
+# Video processing
+ffmpeg-python>=0.2.0
+
+# Utilities
+colorama>=0.4.6  # Colored terminal output
+tqdm>=4.65.0     # Progress bars

@@ -1,0 +1,48 @@
+# Movie Definition for Demo Project
+
+movie:
+  title: "Demo Movie"
+  version: "1.0"
+  description: "A simple demonstration movie"
+  resolution: [1920, 1080]
+  fps: 24
+  duration_frames: 120
+
+scenes:
+  - name: "intro"
+    blend_file: "blender/scenes/intro.blend"
+    frame_range: [1, 60]
+    config:
+      camera: "Camera.intro"
+
+  - name: "main"
+    blend_file: "blender/main.blend"
+    frame_range: [61, 120]
+    config:
+      camera: "Camera.main"
+
+assets:
+  shared:
+    - "../../shared/assets/hdris/studio.hdr"
+    - "../../shared/assets/materials/basic_materials.blend"
+  local:
+    - "blender/assets/demo_object.blend"
+
+render:
+  engine: "CYCLES"
+  device: "GPU"
+  samples: 128
+  preset: "medium"
+  denoising: true
+  motion_blur: true
+  format: "PNG"
+
+output:
+  format: "PNG"
+  final_video: "renders/final/demo_movie_v1.mp4"
+  codec: "h264"
+
+# Optional: Custom render settings per scene
+scene_overrides:
+  intro:
+    samples: 256  # Higher quality for intro

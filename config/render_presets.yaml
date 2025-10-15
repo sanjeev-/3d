@@ -1,0 +1,37 @@
+# Render presets for different quality levels
+
+presets:
+  preview:
+    engine: CYCLES
+    device: GPU
+    samples: 32
+    resolution_percentage: 50
+    denoising: true
+    motion_blur: false
+
+  medium:
+    engine: CYCLES
+    device: GPU
+    samples: 128
+    resolution_percentage: 100
+    denoising: true
+    motion_blur: true
+
+  high_quality:
+    engine: CYCLES
+    device: GPU
+    samples: 512
+    resolution_percentage: 100
+    denoising: true
+    motion_blur: true
+    adaptive_sampling: true
+
+  final:
+    engine: CYCLES
+    device: GPU
+    samples: 1024
+    resolution_percentage: 100
+    denoising: true
+    motion_blur: true
+    adaptive_sampling: true
+    color_depth: 16

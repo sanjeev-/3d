@@ -1,0 +1,37 @@
+# Export settings for final video output
+
+video_codecs:
+  h264:
+    codec: libx264
+    preset: slow
+    crf: 18
+    pixel_format: yuv420p
+
+  h265:
+    codec: libx265
+    preset: medium
+    crf: 20
+    pixel_format: yuv420p10le
+
+  prores:
+    codec: prores_ks
+    profile: 3  # ProRes 422 HQ
+    pixel_format: yuv422p10le
+
+audio:
+  codec: aac
+  bitrate: 320k
+  sample_rate: 48000
+
+formats:
+  mp4:
+    container: mp4
+    default_codec: h264
+
+  mov:
+    container: mov
+    default_codec: prores
+
+  webm:
+    container: webm
+    default_codec: libvpx-vp9

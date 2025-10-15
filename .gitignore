@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Blender
+*.blend1
+*.blend2
+*.blend~
+*.blend@
+
+# Renders (keep structure, ignore content)
+movies/*/renders/frames/*
+movies/*/renders/final/*.png
+movies/*/renders/final/*.exr
+!movies/*/renders/frames/.gitkeep
+!movies/*/renders/final/.gitkeep
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
