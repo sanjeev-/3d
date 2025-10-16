@@ -1,0 +1,22 @@
+# Django and REST Framework
+Django>=4.2.0
+djangorestframework>=3.14.0
+django-cors-headers>=4.0.0
+
+# Authentication
+djangorestframework-simplejwt>=5.2.0
+
+# Database
+psycopg2-binary>=2.9.5  # PostgreSQL (optional, use SQLite for dev)
+
+# Blender integration
+bpy>=3.6.0  # Blender as Python module (optional)
+pyyaml>=6.0
+
+# Utilities
+python-dotenv>=1.0.0
+pillow>=10.0.0  # Image handling
+
+# Development
+black>=23.0.0
+flake8>=6.0.0
