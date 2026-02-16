@@ -377,7 +377,7 @@ def render_local_with_progress(
     render_config: Dict[str, Any],
 ):
     """
-    Execute local rendering with progress display.
+    Execute local rendering with progress display using the Renderer class.
 
     Args:
         blend_file: Path to .blend file
@@ -386,6 +386,8 @@ def render_local_with_progress(
         output_dir: Output directory
         render_config: Render configuration dictionary
     """
+    from .render import Renderer, RenderConfig
+
     frames = list(range(frame_start, frame_end + 1))
     total_frames = len(frames)
 
@@ -393,27 +395,46 @@ def render_local_with_progress(
     frames_rendered = 0
     frames_failed = 0
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeRemainingColumn(),
-        console=console,
-    ) as progress:
-
-        render_task = progress.add_task(
-            f"[green]Rendering locally...",
-            total=total_frames
+    try:
+        # Create RenderConfig for local rendering
+        config = RenderConfig(
+            blend_file=str(blend_file),
+            output_dir=str(output_dir),
+            frame_start=frame_start,
+            frame_end=frame_end,
+            use_modal=False,
+            render_settings=render_config,
         )
 
-        # Simulate local rendering
-        # In ticket #5, this will call actual Renderer class
-        for i, frame in enumerate(frames):
-            # Simulate frame rendering time
-            time.sleep(0.1)
-            progress.update(render_task, advance=1)
-            frames_rendered += 1
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+
+            render_task = progress.add_task(
+                f"[green]Rendering locally with Blender...",
+                total=total_frames
+            )
+
+            # Execute actual rendering using Renderer class
+            renderer = Renderer()
+            results = renderer.render_sequence(config)
+
+            # Check if rendering succeeded
+            if results and results[0] == 0:
+                frames_rendered = total_frames
+            else:
+                frames_failed = total_frames
+
+            progress.update(render_task, completed=total_frames)
+
+    except Exception as e:
+        console.print(f"\n[bold red]Error during rendering:[/bold red] {e}")
+        frames_failed = total_frames
 
     total_time = time.time() - start_time
 

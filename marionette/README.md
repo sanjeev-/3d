@@ -31,6 +31,51 @@ pip install -e .
 
 ### Python API
 
+#### Unified Renderer API (Recommended)
+
+```python
+from marionette import Renderer, RenderConfig
+
+# Local rendering
+config = RenderConfig(
+    blend_file="scene.blend",
+    output_dir="./output",
+    frame_start=1,
+    frame_end=100,
+    use_modal=False,
+    render_settings={
+        "engine": "CYCLES",
+        "device": "GPU",
+        "samples": 128,
+        "denoising": True,
+    }
+)
+
+renderer = Renderer()
+renderer.render_sequence(config)
+
+# Modal cloud rendering
+config = RenderConfig(
+    blend_file="scene.blend",
+    output_dir="./output",
+    frame_start=1,
+    frame_end=100,
+    use_modal=True,
+    gpu_type="A10G",
+    parallel_containers=8,
+    render_settings={
+        "engine": "CYCLES",
+        "samples": 256,
+        "denoising": True,
+    }
+)
+
+renderer = Renderer()
+renderer.render_sequence(config)
+```
+
+#### Direct Modal API
+
 ```python
 from marionette import render_frames_remote
 
@@ -100,9 +145,9 @@ Marionette creates a Modal app with:
 This is part of a multi-ticket implementation:
 
 - ✅ Ticket #1-2: Modal rendering module (completed)
-- ✅ **Ticket #3: CLI foundation** (completed)
-- 🚧 Ticket #4: Rich UI for progress tracking (planned)
-- 🚧 Ticket #5: Integration with existing Renderer (planned)
+- ✅ Ticket #3: CLI foundation (completed)
+- ✅ Ticket #4: Rich UI for progress tracking (completed)
+- ✅ **Ticket #5: Integration with existing Renderer** (completed)
 
 ## Development
 
