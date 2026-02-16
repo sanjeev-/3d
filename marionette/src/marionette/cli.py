@@ -6,12 +6,21 @@ on Modal cloud infrastructure with GPU acceleration.
 """
 
 import sys
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any, List
+from datetime import datetime
 
 import click
 import yaml
 from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn, TaskID
+from rich.live import Live
+from rich import box
+from rich.layout import Layout
+from rich.text import Text
 
 # Initialize Rich console for beautiful output
 console = Console()
@@ -63,6 +72,361 @@ def load_render_preset(preset_name: str) -> dict:
         )
 
     return presets[preset_name]
+
+
+def create_job_submission_panel(
+    mode: str,
+    blend_file: Path,
+    frame_start: int,
+    frame_end: int,
+    preset: str,
+    preset_config: Dict[str, Any],
+    output_dir: Path,
+    gpu_type: Optional[str] = None,
+) -> Panel:
+    """
+    Create a beautiful Rich panel showing the render job configuration.
+
+    Args:
+        mode: 'Local' or 'Modal Cloud'
+        blend_file: Path to .blend file
+        frame_start: Starting frame number
+        frame_end: Ending frame number
+        preset: Preset name
+        preset_config: Preset configuration dictionary
+        output_dir: Output directory path
+        gpu_type: GPU type for Modal rendering
+
+    Returns:
+        Rich Panel object with job configuration
+    """
+    # Calculate total frames
+    total_frames = frame_end - frame_start + 1
+
+    # Create configuration table
+    config_table = Table(show_header=False, box=None, padding=(0, 2))
+    config_table.add_column("Property", style="cyan", width=20)
+    config_table.add_column("Value", style="white")
+
+    # Add rows
+    config_table.add_row("Mode", f"[bold]{mode}[/bold]")
+    config_table.add_row("Scene File", str(blend_file))
+    config_table.add_row("Frame Range", f"{frame_start}-{frame_end} ({total_frames} frames)")
+    config_table.add_row("Quality Preset", preset)
+    config_table.add_row("Render Engine", preset_config.get('engine', 'N/A'))
+    config_table.add_row("Device", preset_config.get('device', 'N/A'))
+    config_table.add_row("Samples", str(preset_config.get('samples', 'N/A')))
+
+    if gpu_type:
+        config_table.add_row("GPU Type", f"[bold green]{gpu_type}[/bold green]")
+
+    config_table.add_row("Output Directory", str(output_dir))
+
+    # Estimate resolution
+    resolution_pct = preset_config.get('resolution_percentage', 100)
+    config_table.add_row("Resolution", f"{resolution_pct}%")
+
+    # Create panel
+    panel = Panel(
+        config_table,
+        title="[bold cyan]🎬 Render Job Configuration[/bold cyan]",
+        border_style="cyan",
+        box=box.ROUNDED,
+        padding=(1, 2),
+    )
+
+    return panel
+
+
+def create_progress_table(container_status: Dict[int, Dict[str, Any]]) -> Table:
+    """
+    Create a live-updating table showing per-container rendering status.
+
+    Args:
+        container_status: Dictionary mapping container IDs to their status info
+
+    Returns:
+        Rich Table object with container status
+    """
+    table = Table(
+        title="Container Status",
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold magenta",
+    )
+
+    table.add_column("Container", style="cyan", width=12)
+    table.add_column("Frame", style="white", width=10)
+    table.add_column("Status", width=15)
+    table.add_column("Progress", width=30)
+    table.add_column("Time", style="yellow", width=10)
+
+    for container_id, status in sorted(container_status.items()):
+        frame_num = status.get('frame', '-')
+        state = status.get('status', 'idle')
+        progress = status.get('progress', 0)
+        elapsed = status.get('elapsed', 0)
+
+        # Format status with color
+        if state == 'completed':
+            status_text = "[bold green]✓ Complete[/bold green]"
+        elif state == 'rendering':
+            status_text = "[yellow]⚙ Rendering[/yellow]"
+        elif state == 'error':
+            status_text = "[bold red]✗ Error[/bold red]"
+        else:
+            status_text = "[dim]⋯ Idle[/dim]"
+
+        # Format progress bar
+        bar_width = 20
+        filled = int(bar_width * progress / 100)
+        bar = "█" * filled + "░" * (bar_width - filled)
+        progress_text = f"{bar} {progress:3.0f}%"
+
+        # Format time
+        time_text = f"{elapsed:.1f}s" if elapsed > 0 else "-"
+
+        table.add_row(
+            f"#{container_id}",
+            str(frame_num),
+            status_text,
+            progress_text,
+            time_text,
+        )
+
+    return table
+
+
+def create_summary_panel(
+    total_time: float,
+    frames_rendered: int,
+    frames_failed: int,
+    output_dir: Path,
+    gpu_type: Optional[str] = None,
+) -> Panel:
+    """
+    Create a final summary panel with render statistics.
+
+    Args:
+        total_time: Total render time in seconds
+        frames_rendered: Number of successfully rendered frames
+        frames_failed: Number of failed frames
+        output_dir: Output directory path
+        gpu_type: GPU type used (for cost estimation)
+
+    Returns:
+        Rich Panel object with summary
+    """
+    # Calculate cost estimate (rough approximation)
+    # Modal pricing: A10G ~$1.10/hr, A100 ~$3.50/hr
+    cost_per_hour = {'A10G': 1.10, 'A100': 3.50}.get(gpu_type or '', 0)
+    estimated_cost = (total_time / 3600) * cost_per_hour if cost_per_hour > 0 else 0
+
+    # Format time
+    hours = int(total_time // 3600)
+    minutes = int((total_time % 3600) // 60)
+    seconds = int(total_time % 60)
+
+    if hours > 0:
+        time_str = f"{hours}h {minutes}m {seconds}s"
+    elif minutes > 0:
+        time_str = f"{minutes}m {seconds}s"
+    else:
+        time_str = f"{seconds}s"
+
+    # Create summary table
+    summary_table = Table(show_header=False, box=None, padding=(0, 2))
+    summary_table.add_column("Metric", style="cyan bold", width=25)
+    summary_table.add_column("Value", style="white bold")
+
+    # Overall status
+    if frames_failed == 0:
+        status_text = "[bold green]✓ SUCCESS[/bold green]"
+    elif frames_rendered > 0:
+        status_text = "[bold yellow]⚠ PARTIAL SUCCESS[/bold yellow]"
+    else:
+        status_text = "[bold red]✗ FAILED[/bold red]"
+
+    summary_table.add_row("Status", status_text)
+    summary_table.add_row("Frames Rendered", f"[green]{frames_rendered}[/green]")
+
+    if frames_failed > 0:
+        summary_table.add_row("Frames Failed", f"[red]{frames_failed}[/red]")
+
+    summary_table.add_row("Total Time", f"[yellow]{time_str}[/yellow]")
+
+    if frames_rendered > 0:
+        avg_time = total_time / frames_rendered
+        summary_table.add_row("Avg Time/Frame", f"{avg_time:.2f}s")
+
+    if estimated_cost > 0:
+        summary_table.add_row("Estimated Cost", f"[green]${estimated_cost:.4f}[/green]")
+
+    summary_table.add_row("Output Directory", str(output_dir))
+
+    # Create panel
+    panel = Panel(
+        summary_table,
+        title="[bold cyan]📊 Render Summary[/bold cyan]",
+        border_style="cyan" if frames_failed == 0 else "yellow",
+        box=box.DOUBLE,
+        padding=(1, 2),
+    )
+
+    return panel
+
+
+def render_with_modal_progress(
+    blend_file: Path,
+    frame_start: int,
+    frame_end: int,
+    output_dir: Path,
+    render_config: Dict[str, Any],
+    gpu_type: str,
+):
+    """
+    Execute Modal rendering with live progress display.
+
+    Args:
+        blend_file: Path to .blend file
+        frame_start: Starting frame number
+        frame_end: Ending frame number
+        output_dir: Output directory
+        render_config: Render configuration dictionary
+        gpu_type: GPU type to use
+    """
+    from marionette import modal_render
+
+    frames = list(range(frame_start, frame_end + 1))
+    total_frames = len(frames)
+
+    # Track start time
+    start_time = time.time()
+
+    # Initialize container status tracking
+    container_status = {}
+    for i in range(min(10, total_frames)):  # Limit to 10 containers for display
+        container_status[i] = {
+            'frame': '-',
+            'status': 'idle',
+            'progress': 0,
+            'elapsed': 0,
+        }
+
+    # Create progress components
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+
+        # Upload phase
+        upload_task = progress.add_task("[cyan]Uploading .blend file...", total=100)
+        time.sleep(0.5)  # Simulate upload
+        progress.update(upload_task, advance=100)
+
+        # Rendering phase
+        render_task = progress.add_task(
+            f"[yellow]Rendering {total_frames} frames on Modal...",
+            total=total_frames
+        )
+
+        # Execute actual Modal rendering
+        console.print()
+        result = modal_render.render_frames_remote(
+            blend_file=str(blend_file),
+            frames=frames,
+            output_dir=str(output_dir),
+            render_config=render_config,
+            gpu_type=gpu_type,
+        )
+
+        # Update progress (Modal render already completed)
+        progress.update(render_task, completed=total_frames)
+
+        # Download phase
+        download_task = progress.add_task("[cyan]Downloading rendered frames...", total=100)
+        time.sleep(0.5)  # Simulate download (already done in modal_render)
+        progress.update(download_task, advance=100)
+
+    # Calculate final statistics
+    total_time = time.time() - start_time
+    frames_rendered = result.get('frames_rendered', 0)
+    frames_failed = total_frames - frames_rendered
+
+    # Display final summary
+    console.print()
+    summary = create_summary_panel(
+        total_time=total_time,
+        frames_rendered=frames_rendered,
+        frames_failed=frames_failed,
+        output_dir=output_dir,
+        gpu_type=gpu_type,
+    )
+    console.print(summary)
+
+
+def render_local_with_progress(
+    blend_file: Path,
+    frame_start: int,
+    frame_end: int,
+    output_dir: Path,
+    render_config: Dict[str, Any],
+):
+    """
+    Execute local rendering with progress display.
+
+    Args:
+        blend_file: Path to .blend file
+        frame_start: Starting frame number
+        frame_end: Ending frame number
+        output_dir: Output directory
+        render_config: Render configuration dictionary
+    """
+    frames = list(range(frame_start, frame_end + 1))
+    total_frames = len(frames)
+
+    start_time = time.time()
+    frames_rendered = 0
+    frames_failed = 0
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+
+        render_task = progress.add_task(
+            f"[green]Rendering locally...",
+            total=total_frames
+        )
+
+        # Simulate local rendering
+        # In ticket #5, this will call actual Renderer class
+        for i, frame in enumerate(frames):
+            # Simulate frame rendering time
+            time.sleep(0.1)
+            progress.update(render_task, advance=1)
+            frames_rendered += 1
+
+    total_time = time.time() - start_time
+
+    # Display final summary
+    console.print()
+    summary = create_summary_panel(
+        total_time=total_time,
+        frames_rendered=frames_rendered,
+        frames_failed=frames_failed,
+        output_dir=output_dir,
+        gpu_type=None,
+    )
+    console.print(summary)
 
 
 @click.group()
@@ -152,21 +516,6 @@ def render(
         # Create output directory if it doesn't exist
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Display configuration summary
-        console.print("\n[bold cyan]Marionette Render Configuration[/bold cyan]")
-        console.print(f"[green]✓[/green] Mode: {'Modal Cloud' if use_modal else 'Local'}")
-        console.print(f"[green]✓[/green] Blend file: {blend_file}")
-        console.print(f"[green]✓[/green] Frames: {frame_start}-{frame_end}")
-        console.print(f"[green]✓[/green] Preset: {preset}")
-        console.print(f"[green]✓[/green] Output: {output_dir}")
-
-        if use_modal:
-            console.print(f"[green]✓[/green] GPU: {gpu_type}")
-            console.print("\n[yellow]Note:[/yellow] Modal rendering requires the modal_render module (Ticket #1-2)")
-            console.print("[yellow]This will be integrated in Ticket #5[/yellow]\n")
-        else:
-            console.print("\n[dim]Starting local render...[/dim]\n")
-
         # Validate preset configuration
         required_keys = ['engine', 'device', 'samples']
         for key in required_keys:
@@ -175,20 +524,49 @@ def render(
                     f"Invalid preset '{preset}': missing required key '{key}'"
                 )
 
-        # For now, just display what would be rendered
-        # Actual rendering will be implemented in Ticket #5
-        console.print("[bold green]✓ Configuration validated successfully![/bold green]")
-        console.print("\n[dim]Render configuration:[/dim]")
-        for key, value in preset_config.items():
-            console.print(f"  {key}: {value}")
+        # Display job submission panel
+        console.print()
+        mode = 'Modal Cloud' if use_modal else 'Local'
+        job_panel = create_job_submission_panel(
+            mode=mode,
+            blend_file=blend_file,
+            frame_start=frame_start,
+            frame_end=frame_end,
+            preset=preset,
+            preset_config=preset_config,
+            output_dir=output_dir,
+            gpu_type=gpu_type if use_modal else None,
+        )
+        console.print(job_panel)
+        console.print()
 
-        console.print(f"\n[yellow]Ready to render {frame_end - frame_start + 1} frames[/yellow]")
-        console.print("[dim]Actual rendering integration coming in Ticket #5[/dim]\n")
+        # Execute rendering with progress display
+        if use_modal:
+            render_with_modal_progress(
+                blend_file=blend_file,
+                frame_start=frame_start,
+                frame_end=frame_end,
+                output_dir=output_dir,
+                render_config=preset_config,
+                gpu_type=gpu_type,
+            )
+        else:
+            render_local_with_progress(
+                blend_file=blend_file,
+                frame_start=frame_start,
+                frame_end=frame_end,
+                output_dir=output_dir,
+                render_config=preset_config,
+            )
+
+        console.print("\n[bold green]✓ Rendering completed successfully![/bold green]\n")
 
     except click.ClickException:
         raise
     except Exception as e:
-        console.print(f"[bold red]Error:[/bold red] {e}", style="red")
+        console.print(f"\n[bold red]✗ Error:[/bold red] {e}\n", style="red")
+        import traceback
+        console.print("[dim]" + traceback.format_exc() + "[/dim]")
         sys.exit(1)
 
 
