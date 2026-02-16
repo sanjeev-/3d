@@ -628,5 +628,187 @@ def parse_frame_range(frames: str) -> tuple[int, int]:
         )
 
 
+# --- Assets CLI ---
+
+DEFAULT_ASSETS_DIR = Path("/Users/sanjeev/Documents/3d/shared/assets")
+
+ASSET_CATEGORIES = [
+    "hdris",
+    "models/characters",
+    "models/scenes",
+    "models/objects",
+    "textures",
+    "materials",
+]
+
+
+def _format_size(size_bytes: int) -> str:
+    """Format byte count as human-readable string."""
+    if size_bytes >= 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024**3):.1f} GB"
+    if size_bytes >= 1024 * 1024:
+        return f"{size_bytes / (1024**2):.1f} MB"
+    if size_bytes >= 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    return f"{size_bytes} B"
+
+
+@main.group()
+@click.option(
+    '--assets-dir',
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=str(DEFAULT_ASSETS_DIR),
+    help='Root directory for shared assets',
+    show_default=True,
+)
+@click.pass_context
+def assets(ctx, assets_dir: Path):
+    """Manage shared assets (HDRIs, models, textures, materials)."""
+    ctx.ensure_object(dict)
+    ctx.obj['assets_dir'] = assets_dir
+
+
+@assets.command('list')
+@click.argument('category', required=False)
+@click.pass_context
+def assets_list(ctx, category: Optional[str]):
+    """List assets by category.
+
+    Without CATEGORY, shows all categories with item counts.
+    With CATEGORY (e.g. "models/scenes"), shows files with sizes.
+    """
+    assets_dir: Path = ctx.obj['assets_dir']
+
+    if category is None:
+        # Summary view — all categories with counts
+        table = Table(
+            title="Asset Categories",
+            box=box.ROUNDED,
+            header_style="bold cyan",
+        )
+        table.add_column("Category", style="cyan")
+        table.add_column("Items", style="white", justify="right")
+        table.add_column("Total Size", style="yellow", justify="right")
+
+        for cat in ASSET_CATEGORIES:
+            cat_path = assets_dir / cat
+            if not cat_path.exists():
+                table.add_row(cat, "[dim]0[/dim]", "[dim]--[/dim]")
+                continue
+            files = [f for f in cat_path.rglob("*") if f.is_file() and not f.name.startswith(".")]
+            total = sum(f.stat().st_size for f in files)
+            table.add_row(cat, str(len(files)), _format_size(total))
+
+        console.print(table)
+        return
+
+    # Detailed view for a specific category
+    cat_path = assets_dir / category
+    if not cat_path.exists():
+        raise click.ClickException(
+            f"Category '{category}' not found at {cat_path}\n"
+            f"Available: {', '.join(ASSET_CATEGORIES)}"
+        )
+
+    files = sorted(
+        [f for f in cat_path.rglob("*") if f.is_file() and not f.name.startswith(".")],
+        key=lambda f: f.name,
+    )
+
+    table = Table(
+        title=f"Assets: {category}",
+        box=box.ROUNDED,
+        header_style="bold cyan",
+    )
+    table.add_column("File", style="white")
+    table.add_column("Size", style="yellow", justify="right")
+    table.add_column("Type", style="dim")
+
+    for f in files:
+        rel = f.relative_to(cat_path)
+        table.add_row(str(rel), _format_size(f.stat().st_size), f.suffix or "--")
+
+    console.print(table)
+    console.print(f"\n[dim]{len(files)} file(s) in {category}[/dim]")
+
+
+@assets.command()
+@click.argument('file_or_dir', type=click.Path(exists=True, path_type=Path))
+@click.option(
+    '--category',
+    required=True,
+    type=click.Choice(ASSET_CATEGORIES, case_sensitive=True),
+    help='Asset category to upload to',
+)
+@click.pass_context
+def upload(ctx, file_or_dir: Path, category: str):
+    """Upload a file or directory to the Modal volume.
+
+    Examples:
+
+        marionette assets upload scene.blend --category models/scenes
+
+        marionette assets upload ./hdris/ --category hdris
+    """
+    from .modal_render import assets_volume
+
+    console.print(f"\nUploading to [bold]marionette-assets[/bold] volume under [cyan]{category}/[/cyan]")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        console=console,
+    ) as progress:
+
+        if file_or_dir.is_file():
+            files = [file_or_dir]
+        else:
+            files = [f for f in file_or_dir.rglob("*") if f.is_file() and not f.name.startswith(".")]
+
+        task = progress.add_task(f"[cyan]Uploading {len(files)} file(s)...", total=len(files))
+
+        with assets_volume.batch_upload() as batch:
+            for f in files:
+                if file_or_dir.is_file():
+                    volume_dest = f"{category}/{f.name}"
+                else:
+                    rel = f.relative_to(file_or_dir)
+                    volume_dest = f"{category}/{rel}"
+                batch.put_file(f, volume_dest)
+                progress.advance(task)
+
+    console.print(f"\n[bold green]Uploaded {len(files)} file(s) to volume:{category}/[/bold green]")
+
+
+@assets.command()
+@click.argument('file', type=str)
+@click.pass_context
+def info(ctx, file: str):
+    """Show info about a local asset file.
+
+    FILE is a path relative to the assets dir (e.g. "models/scenes/bedroom.blend").
+    """
+    assets_dir: Path = ctx.obj['assets_dir']
+    full_path = assets_dir / file
+
+    if not full_path.exists():
+        raise click.ClickException(f"File not found: {full_path}")
+
+    stat = full_path.stat()
+
+    table = Table(show_header=False, box=box.ROUNDED, padding=(0, 2))
+    table.add_column("Property", style="cyan")
+    table.add_column("Value", style="white")
+
+    table.add_row("Path", str(full_path))
+    table.add_row("Size", _format_size(stat.st_size))
+    table.add_row("Type", full_path.suffix or "--")
+    table.add_row("Modified", datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"))
+
+    console.print(table)
+
+
 if __name__ == '__main__':
     main()

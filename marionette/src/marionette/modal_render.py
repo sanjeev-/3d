@@ -4,9 +4,14 @@ Modal cloud GPU rendering module for Blender.
 This module provides cloud-based GPU rendering capabilities using Modal.
 It sets up a containerized environment with Blender, CUDA drivers, and
 distributed frame rendering across parallel Modal containers.
+
+Blend files are stored on a Modal Volume ("marionette-assets") so that
+each worker reads directly from cloud storage instead of receiving the
+full file bytes in its task tuple.
 """
 
 import modal
+import textwrap
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
@@ -15,8 +20,10 @@ from pydantic import BaseModel, Field
 # Define the Modal app
 app = modal.App("marionette-blender-render")
 
+# Shared volume for .blend files and other assets
+assets_volume = modal.Volume.from_name("marionette-assets", create_if_missing=True)
 
-# Define the container image with Blender 3.6+, CUDA, and Python dependencies
+# Define the container image with Blender 4.5, CUDA, and Python dependencies
 blender_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install(
@@ -33,10 +40,10 @@ blender_image = (
         # CUDA dependencies will be handled by Modal's gpu parameter
     )
     .run_commands(
-        # Download and install Blender 3.6 LTS
-        "wget -q https://download.blender.org/release/Blender3.6/blender-3.6.9-linux-x64.tar.xz -O /tmp/blender.tar.xz",
+        # Download and install Blender 4.5.6 (compatible with 4.5.x .blend files)
+        "wget -q https://download.blender.org/release/Blender4.5/blender-4.5.6-linux-x64.tar.xz -O /tmp/blender.tar.xz",
         "tar -xf /tmp/blender.tar.xz -C /opt/",
-        "mv /opt/blender-3.6.9-linux-x64 /opt/blender",
+        "mv /opt/blender-4.5* /opt/blender",
         "rm /tmp/blender.tar.xz",
         "ln -s /opt/blender/blender /usr/local/bin/blender",
     )
@@ -45,6 +52,8 @@ blender_image = (
         "pyyaml>=6.0",
     )
 )
+
+VOLUME_MOUNT_PATH = "/assets"
 
 
 class RenderConfig(BaseModel):
@@ -62,20 +71,21 @@ class FrameRenderTask(BaseModel):
     """Specification for a single frame render task."""
 
     frame_number: int = Field(description="Frame number to render")
-    blend_file_data: bytes = Field(description="Blender file contents")
+    blend_file_volume_path: str = Field(description="Path to .blend file on the volume")
     output_filename: str = Field(description="Output filename for rendered frame")
     render_config: RenderConfig = Field(default_factory=RenderConfig)
 
 
 @app.function(
     image=blender_image,
-    gpu="A10G",  # Default GPU type (can be overridden)
-    timeout=3600,  # 1 hour timeout per frame
-    retries=2,  # Retry failed renders
+    gpu="A10G",
+    timeout=3600,
+    retries=2,
+    volumes={VOLUME_MOUNT_PATH: assets_volume},
 )
 def render_single_frame(
     frame_number: int,
-    blend_file_data: bytes,
+    blend_file_volume_path: str,
     output_filename: str,
     render_config: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -83,13 +93,13 @@ def render_single_frame(
     Render a single frame using Blender with GPU acceleration.
 
     This function runs inside a Modal container with GPU access.
-    It writes the blend file to a temporary location, configures
-    Blender for GPU rendering, renders the frame, and returns
-    the rendered image data.
+    It reads the .blend file directly from the mounted volume,
+    configures Blender for GPU rendering via a temp Python script,
+    renders the frame, and returns the rendered image data.
 
     Args:
         frame_number: Frame number to render
-        blend_file_data: Binary content of the .blend file
+        blend_file_volume_path: Path to .blend on the volume (e.g. "models/scenes/bedroom.blend")
         output_filename: Name for the output file
         render_config: Dictionary with render settings
 
@@ -103,7 +113,6 @@ def render_single_frame(
     """
     import subprocess
     import tempfile
-    import os
     from pathlib import Path
 
     result = {
@@ -131,86 +140,92 @@ def render_single_frame(
             result["gpu_info"] = f"GPU detection error: {str(e)}"
             print(f"Warning: Could not detect GPU: {e}")
 
-        # Create temporary directory for render operation
+        # Resolve blend file from the mounted volume
+        blend_path = Path(VOLUME_MOUNT_PATH) / blend_file_volume_path
+        if not blend_path.exists():
+            result["error"] = f"Blend file not found on volume: {blend_path}"
+            return result
+
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir_path = Path(tmpdir)
 
-            # Write blend file to temporary location
-            blend_file_path = tmpdir_path / "scene.blend"
-            with open(blend_file_path, "wb") as f:
-                f.write(blend_file_data)
-
             print(f"Rendering frame {frame_number} with {render_config.get('engine', 'CYCLES')}")
+            print(f"Blend file: {blend_path}")
             print(f"GPU: {result['gpu_info']}")
 
-            # Build output path
+            # Build output path — Blender's filepath is a base (no extension);
+            # Blender appends the frame number and extension automatically.
             output_path = tmpdir_path / output_filename
+            render_filepath = str(tmpdir_path / output_path.stem)
 
             # Build Blender Python script for render configuration
-            python_script_parts = [
+            script_lines = [
                 "import bpy",
                 f"bpy.context.scene.frame_set({frame_number})",
-                f"bpy.context.scene.render.filepath = '{output_path}'",
+                f"bpy.context.scene.render.filepath = '{render_filepath}'",
             ]
 
             # Apply render settings
             config = render_config
 
             if config.get('engine'):
-                python_script_parts.append(
+                script_lines.append(
                     f"bpy.context.scene.render.engine = '{config['engine']}'"
                 )
 
             if config.get('samples'):
-                python_script_parts.append(
+                script_lines.append(
                     f"bpy.context.scene.cycles.samples = {config['samples']}"
                 )
 
             if config.get('resolution_percentage'):
-                python_script_parts.append(
+                script_lines.append(
                     f"bpy.context.scene.render.resolution_percentage = {config['resolution_percentage']}"
                 )
 
             if config.get('denoising'):
-                python_script_parts.append(
+                script_lines.append(
                     "bpy.context.scene.cycles.use_denoising = True"
                 )
 
             if config.get('format'):
-                python_script_parts.append(
+                script_lines.append(
                     f"bpy.context.scene.render.image_settings.file_format = '{config['format']}'"
                 )
 
-            # Configure GPU rendering
+            # Inject custom per-frame setup script (e.g., camera, focal length)
+            if config.get('setup_script'):
+                script_lines.append(config['setup_script'])
+
+            # Configure GPU rendering with proper Python (not semicolon-joined)
             if config.get('device') == 'GPU':
-                python_script_parts.extend([
-                    # Try to set CUDA as compute device
-                    "import bpy",
-                    "prefs = bpy.context.preferences.addons.get('cycles')",
-                    "if prefs:",
-                    "    prefs = prefs.preferences",
-                    "    # Try CUDA first, fall back to OPTIX",
-                    "    for compute_device_type in ['CUDA', 'OPTIX']:",
-                    "        try:",
-                    "            prefs.compute_device_type = compute_device_type",
-                    "            prefs.get_devices()",
-                    "            break",
-                    "        except: pass",
-                    "    # Enable all available GPU devices",
-                    "    for device in prefs.devices:",
-                    "        device.use = True",
-                    "bpy.context.scene.cycles.device = 'GPU'",
-                ])
+                script_lines.append(textwrap.dedent("""\
+                    prefs = bpy.context.preferences.addons.get('cycles')
+                    if prefs:
+                        prefs = prefs.preferences
+                        for cdt in ['CUDA', 'OPTIX']:
+                            try:
+                                prefs.compute_device_type = cdt
+                                prefs.get_devices()
+                                break
+                            except:
+                                pass
+                        for device in prefs.devices:
+                            device.use = True
+                    bpy.context.scene.cycles.device = 'GPU'"""))
 
-            python_script = "; ".join(python_script_parts)
+            # Write the full script to a temp .py file
+            script_path = tmpdir_path / "render_setup.py"
+            with open(script_path, "w") as f:
+                f.write("\n".join(script_lines))
 
-            # Build Blender command
+            # Build Blender command using --python (not --python-expr)
             cmd = [
                 "blender",
                 "--background",
-                str(blend_file_path),
-                "--python-expr",
-                python_script,
+                str(blend_path),
+                "--python",
+                str(script_path),
                 "--render-frame",
                 str(frame_number),
             ]
@@ -221,34 +236,27 @@ def render_single_frame(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=3000,  # 50 minute timeout
+                timeout=3000,
             )
 
             if render_process.returncode != 0:
                 result["error"] = f"Blender process failed with code {render_process.returncode}"
-                result["error"] += f"\nSTDOUT: {render_process.stdout[-1000:]}"  # Last 1000 chars
+                result["error"] += f"\nSTDOUT: {render_process.stdout[-1000:]}"
                 result["error"] += f"\nSTDERR: {render_process.stderr[-1000:]}"
                 print(result["error"])
                 return result
 
-            # Check if output file was created
-            # Blender may add frame number to filename
-            possible_outputs = [
-                output_path,
-                output_path.with_suffix(f".{frame_number:04d}{output_path.suffix}"),
-                tmpdir_path / f"{output_path.stem}{frame_number:04d}{output_path.suffix}",
-            ]
-
+            # Find the rendered output file.
+            # Blender writes to {filepath}{frame:04d}.{ext}, e.g. focal_length_010mm0001.png
             output_file = None
-            for possible_output in possible_outputs:
-                if possible_output.exists():
-                    output_file = possible_output
+            for candidate in sorted(tmpdir_path.glob(f"{output_path.stem}*")):
+                if candidate.suffix in (".png", ".jpg", ".exr", ".tif", ".tiff", ".bmp"):
+                    output_file = candidate
                     break
 
             if not output_file or not output_file.exists():
-                # List directory contents for debugging
                 dir_contents = list(tmpdir_path.glob("*"))
-                result["error"] = f"Output file not found. Expected: {output_path}. Directory contents: {dir_contents}"
+                result["error"] = f"Output file not found. Expected: {output_path.stem}*. Directory contents: {dir_contents}"
                 print(result["error"])
                 return result
 
@@ -271,6 +279,32 @@ def render_single_frame(
     return result
 
 
+def upload_to_volume(local_path: str, volume_path: str, force: bool = False) -> str:
+    """
+    Upload a local file to the marionette-assets Modal Volume.
+
+    Args:
+        local_path: Path to the local file
+        volume_path: Destination path on the volume (e.g. "models/scenes/bedroom.blend")
+        force: If True, overwrite existing files. If False, skip if already exists.
+
+    Returns:
+        The volume_path that was written to
+    """
+    local = Path(local_path)
+    if not local.exists():
+        raise FileNotFoundError(f"Local file not found: {local_path}")
+
+    size_mb = local.stat().st_size / (1024 * 1024)
+
+    vol = modal.Volume.from_name("marionette-assets", create_if_missing=True)
+    with vol.batch_upload(force=force) as batch:
+        batch.put_file(local, volume_path)
+
+    print(f"Uploaded {local.name} ({size_mb:.1f} MB) -> volume:{volume_path}")
+    return volume_path
+
+
 def render_frames_remote(
     blend_file: str,
     frames: List[int],
@@ -282,25 +316,20 @@ def render_frames_remote(
     Render multiple frames on Modal cloud infrastructure.
 
     This function orchestrates the complete remote rendering workflow:
-    1. Uploads the .blend file (reads into memory as bytes)
+    1. Uploads the .blend file to a Modal Volume (once)
     2. Distributes frames across parallel Modal containers
-    3. Launches rendering jobs using the render_single_frame function
+    3. Each worker reads the .blend from the volume mount (no bytes in task tuples)
     4. Downloads rendered frames back to local output directory
 
     Args:
-        blend_file: Path to the .blend file
+        blend_file: Path to the local .blend file
         frames: List of frame numbers to render
         output_dir: Local directory to save rendered frames
         render_config: Render configuration dictionary
         gpu_type: GPU type to use (A10G, A100, etc.)
 
     Returns:
-        Dictionary with render results and statistics including:
-            - status: "success", "partial_failure", or "error"
-            - frames_rendered: Number of successfully rendered frames
-            - total_time: Total rendering time in seconds
-            - output_dir: Path to output directory
-            - failed_frames: List of frame numbers that failed (if any)
+        Dictionary with render results and statistics
     """
     import time
 
@@ -323,16 +352,16 @@ def render_frames_remote(
 
     start_time = time.time()
 
-    # Step 1: Upload blend file (read into memory)
-    print(f"\n[1/3] Loading .blend file...")
+    # Step 1: Upload blend file to Modal Volume (once, not per-worker)
+    volume_path = f"scenes/{blend_path.name}"
+    print(f"\n[1/3] Uploading .blend file to Modal Volume...")
     try:
-        with open(blend_path, "rb") as f:
-            blend_file_data = f.read()
-        print(f"✓ Loaded {len(blend_file_data)} bytes")
+        upload_to_volume(str(blend_path), volume_path, force=True)
+        print(f"Uploaded to volume:{volume_path}")
     except Exception as e:
         return {
             "status": "error",
-            "error": f"Failed to read blend file: {str(e)}",
+            "error": f"Failed to upload blend file to volume: {str(e)}",
             "frames_rendered": 0,
         }
 
@@ -344,11 +373,11 @@ def render_frames_remote(
     print(f"Launching render jobs on Modal with {gpu_type} GPUs...")
 
     try:
-        # Prepare render tasks for all frames
+        # Prepare render tasks — only a path string, not the full file bytes
         render_tasks = [
             (
                 frame_num,
-                blend_file_data,
+                volume_path,
                 f"frame_{frame_num:04d}.png",
                 config,
             )
@@ -356,12 +385,9 @@ def render_frames_remote(
         ]
 
         # Execute rendering in parallel using Modal's starmap
-        # This distributes the frames across available containers
         with app.run():
-            # Configure GPU type for this run
             render_fn = render_single_frame
             if gpu_type != "A10G":
-                # Create a new function with different GPU if needed
                 render_fn = modal.Function.from_name(
                     app, "render_single_frame"
                 ).with_options(gpu=gpu_type)
@@ -372,11 +398,11 @@ def render_frames_remote(
         successful_frames = [r for r in results if r.get("success")]
         failed_frames = [r for r in results if not r.get("success")]
 
-        print(f"✓ Rendering completed: {len(successful_frames)} successful, {len(failed_frames)} failed")
+        print(f"Rendering completed: {len(successful_frames)} successful, {len(failed_frames)} failed")
 
         if failed_frames:
             print("\nFailed frames:")
-            for failed in failed_frames[:5]:  # Show first 5 failures
+            for failed in failed_frames[:5]:
                 print(f"  Frame {failed['frame_number']}: {failed.get('error', 'Unknown error')}")
             if len(failed_frames) > 5:
                 print(f"  ... and {len(failed_frames) - 5} more")
@@ -398,7 +424,6 @@ def render_frames_remote(
             frame_data = result["output_data"]
 
             if frame_data:
-                # Write frame to output directory
                 output_file = output_path / f"frame_{frame_num:04d}.png"
                 with open(output_file, "wb") as f:
                     f.write(frame_data)
@@ -407,7 +432,7 @@ def render_frames_remote(
             print(f"Warning: Failed to save frame {result.get('frame_number')}: {e}")
             continue
 
-    print(f"✓ Downloaded {len(downloaded_files)} frames")
+    print(f"Downloaded {len(downloaded_files)} frames")
 
     # Calculate total time
     total_time = time.time() - start_time
