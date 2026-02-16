@@ -1,77 +1,88 @@
 # Marionette
 
-Cloud GPU rendering for Blender using Modal's serverless infrastructure.
+Cloud GPU rendering for Blender projects using [Modal](https://modal.com).
 
 ## Features
 
-- **Distributed Rendering**: Split frame ranges across multiple GPU containers
-- **Cloud GPUs**: Leverage Modal's A10G, A100, and other GPU instances
-- **Automatic File Transfer**: Seamless upload/download of blend files and rendered frames
-- **Parallel Execution**: Render multiple frame ranges simultaneously
-- **Simple CLI**: Easy-to-use command-line interface (coming soon)
+- **Cloud GPU Rendering**: Leverage Modal's cloud infrastructure with NVIDIA A10G/A100 GPUs
+- **Parallel Rendering**: Distribute frames across multiple containers for faster rendering
+- **Blender 3.6+ Support**: Uses latest Blender LTS with Cycles GPU rendering
+- **Easy Integration**: Drop-in replacement for local rendering workflows
 
 ## Installation
 
 ```bash
-cd marionette
-pip install -e .
+pip install -e marionette
 ```
 
-## Setup
-
-1. Install Modal CLI and authenticate:
+For CLI support:
 ```bash
-pip install modal
-modal token new
+pip install -e "marionette[cli]"
 ```
 
-2. The first time you run a render, Modal will build the container image with Blender and CUDA support.
+## Quick Start
 
-## Usage
+### Prerequisites
+
+1. Install Modal and authenticate:
+   ```bash
+   pip install modal
+   modal token new
+   ```
+
+2. Ensure you have a Modal account with GPU access
 
 ### Python API
 
 ```python
-from marionette.modal_render import render_frames_remote
+from marionette import render_frames_remote
 
-result = render_frames_remote(
-    blend_file="path/to/scene.blend",
-    output_dir="output/frames",
-    frame_start=1,
-    frame_end=100,
-    num_containers=4,
-    gpu_type="A10G",
+# Render frames 1-100 using cloud GPUs
+results = render_frames_remote(
+    blend_file="scene.blend",
+    frames=list(range(1, 101)),
+    output_dir="./renders",
     render_config={
+        "engine": "CYCLES",
+        "device": "GPU",
         "samples": 128,
-        "resolution_percentage": 100,
         "denoising": True,
-    }
+    },
+    gpu_type="A10G"
 )
-
-print(f"Rendered {result['frames_rendered']} frames in {result['total_time']:.2f}s")
 ```
 
 ### CLI (Coming Soon)
 
 ```bash
+# Render using Modal cloud GPUs
 marionette render scene.blend --modal --frames 1-100 --gpu-type A10G
+
+# Render locally (default)
+marionette render scene.blend --frames 1-100
 ```
-
-## Configuration
-
-Render configuration options:
-- `engine`: Render engine (default: "CYCLES")
-- `samples`: Number of samples for Cycles (default: 128)
-- `resolution_percentage`: Render resolution as percentage (default: 100)
-- `denoising`: Enable denoising (default: True)
-- `format`: Output format (default: "PNG")
 
 ## Architecture
 
-1. **File Upload**: Blend files are uploaded to Modal's persistent Volume
-2. **Frame Distribution**: Frame range is split evenly across N containers
-3. **Parallel Rendering**: Each container renders its assigned frames using GPU
-4. **File Download**: Rendered frames are downloaded back to local directory
+Marionette creates a Modal app with:
+
+- **Container Image**: Debian-based image with Blender 3.6, CUDA drivers, and Python dependencies
+- **GPU Functions**: Modal functions decorated with GPU specifications (A10G, A100, etc.)
+- **Distributed Rendering**: Frames are distributed across parallel containers
+- **File Transfer**: Automatic upload/download of .blend files and rendered frames
+
+## Development
+
+```bash
+# Install in development mode with dev dependencies
+pip install -e "marionette[dev,cli]"
+
+# Run tests
+pytest
+
+# Format code
+black src/
+```
 
 ## License
 

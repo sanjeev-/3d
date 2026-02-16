@@ -5,12 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "marionette"
 version = "0.1.0"
-description = "Cloud GPU rendering for Blender using Modal"
+description = "Cloud GPU rendering for Blender projects using Modal"
 readme = "README.md"
 requires-python = ">=3.9"
+license = { text = "MIT" }
 authors = [
-    {name = "Marionette Team"},
+    { name = "Marionette Contributors" }
 ]
+keywords = ["blender", "rendering", "gpu", "cloud", "modal"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -19,27 +21,49 @@ classifiers = [
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Graphics :: 3D Rendering",
 ]
 
 dependencies = [
-    "modal>=0.55.0",
+    "modal>=0.63.0",
     "pydantic>=2.0.0",
     "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "black>=23.0.0",
+    "pytest>=7.0",
+    "black>=23.0",
     "ruff>=0.1.0",
 ]
 
-[project.scripts]
-marionette = "marionette.cli:main"
+cli = [
+    "click>=8.0",
+    "rich>=13.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/marionette"
+Documentation = "https://github.com/yourusername/marionette/blob/main/README.md"
+Repository = "https://github.com/yourusername/marionette"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 marionette = ["py.typed"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
