@@ -25,50 +25,78 @@ class CameraMovement(ABC):
         """Apply the movement logic to the camera."""
         pass
 
-    def _get_or_create_constraint(self, camera: Camera, constraint_name: str = "Marionette_LookAt"):
-        """Get or create a Track To constraint on the camera."""
-        con = camera.obj.constraints.get(constraint_name)
-        if not con:
-            con = camera.obj.constraints.new(type='TRACK_TO')
-            con.name = constraint_name
+    def _setup_track_to(self, camera: Camera, target_name: str, start_frame: int, end_frame: int):
+            """Helper to create or update a Track To constraint for 'look_at' functionality.
+            
+            Args:
+                camera: The camera object
+                target_name: Name of the object to track
+                start_frame: Frame where tracking should start (influence 0)
+                end_frame: Frame where tracking should be active (influence 1)
+            """
+            if target_name not in bpy.data.objects:
+                print(f"Warning: Target {target_name} not found.")
+                return
+                
+            target_obj = bpy.data.objects[target_name]
+            constraint_name = "Marionette_LookAt"
+            
+            con = camera.obj.constraints.get(constraint_name)
+            if not con:
+                con = camera.obj.constraints.new(type='TRACK_TO')
+                con.name = constraint_name
+                
+            con.target = target_obj
             con.track_axis = 'TRACK_NEGATIVE_Z'
             con.up_axis = 'UP_Y'
-        return con
+            
+            # Set influence to 0 at start_frame for smooth transition
+            con.influence = 0.0
+            camera.obj.keyframe_insert(
+                data_path=f'constraints["{constraint_name}"].influence', 
+                frame=start_frame
+            )
+            
+            # Set influence to 1.0 at end_frame
+            con.influence = 1.0
+            camera.obj.keyframe_insert(
+                data_path=f'constraints["{constraint_name}"].influence', 
+                frame=end_frame
+            )
+            
+            # Apply interpolation to constraint influence keyframes
+            self._set_constraint_influence_interpolation(camera, constraint_name, start_frame, end_frame)
     
-    def _set_constraint_influence(self, camera: Camera, constraint_name: str, frame: int, influence: float):
-        """Set constraint influence at a specific frame."""
+    def _set_constraint_influence_interpolation(self, camera: Camera, constraint_name: str, start_frame: int, end_frame: int):
+        """Set interpolation on constraint influence keyframes."""
+        if not camera.obj.animation_data or not camera.obj.animation_data.action:
+            return
+        
+        data_path = f'constraints["{constraint_name}"].influence'
+        for fcurve in camera.obj.animation_data.action.fcurves:
+            if fcurve.data_path == data_path:
+                for kp in fcurve.keyframe_points:
+                    if kp.co.x == start_frame or kp.co.x == end_frame:
+                        kp.interpolation = self.interpolation.value
+    
+    def _disable_track_to(self, camera: Camera, frame: int):
+        """Disable the Track To constraint at a specific frame."""
+        constraint_name = "Marionette_LookAt"
         con = camera.obj.constraints.get(constraint_name)
         if con:
-            con.influence = influence
+            con.influence = 0.0
             camera.obj.keyframe_insert(
-                data_path=f'constraints["{constraint_name}"].influence',
+                data_path=f'constraints["{constraint_name}"].influence', 
                 frame=frame
             )
-    
-    def _setup_track_to(self, camera: Camera, target_name: str, start_frame: int, end_frame: int):
-        """Helper to create or update a Track To constraint for 'look_at' functionality.
-        
-        Args:
-            camera: The camera object
-            target_name: Name of the object to track
-            start_frame: Frame where tracking should start (influence 0)
-            end_frame: Frame where tracking should be active (influence 1)
-        """
-        if target_name not in bpy.data.objects:
-            print(f"Warning: Target {target_name} not found.")
-            return
-            
-        target_obj = bpy.data.objects[target_name]
-        constraint_name = "Marionette_LookAt"
-        
-        con = self._get_or_create_constraint(camera, constraint_name)
-        con.target = target_obj
-        
-        # Set influence to 0 at start_frame for smooth transition
-        self._set_constraint_influence(camera, constraint_name, start_frame, 0.0)
-        
-        # Set influence to 1.0 at end_frame
-        self._set_constraint_influence(camera, constraint_name, end_frame, 1.0)
+            # Apply interpolation
+            if camera.obj.animation_data and camera.obj.animation_data.action:
+                data_path = f'constraints["{constraint_name}"].influence'
+                for fcurve in camera.obj.animation_data.action.fcurves:
+                    if fcurve.data_path == data_path:
+                        for kp in fcurve.keyframe_points:
+                            if kp.co.x == frame:
+                                kp.interpolation = self.interpolation.value
 
 class DollyMovement(CameraMovement):
     """Moves camera from point A to point B."""
@@ -92,14 +120,10 @@ class GenericCameraMovement(CameraMovement):
         super().__init__(self.waypoints[0].frame, self.waypoints[-1].frame, interpolation)
 
     def apply(self, camera: Camera):
-        """Apply waypoint-based camera movement with smooth transitions."""
         constraint_name = "Marionette_LookAt"
-        prev_waypoint = None
+        previous_has_look_at = False
         
         for i, wp in enumerate(self.waypoints):
-            # Determine transition start frame (previous waypoint or movement start)
-            transition_start = self.waypoints[i - 1].frame if i > 0 else self.start_frame
-            
             # 1. Handle Location
             if wp.location is not None:
                 camera.location = wp.location
@@ -109,22 +133,37 @@ class GenericCameraMovement(CameraMovement):
             if wp.lens is not None:
                 camera.lens = wp.lens
                 camera.keyframe("lens", frame=wp.frame, interpolation=self.interpolation)
-            
-            # 3. Handle Rotation/Tracking with smooth transitions
-            prev_was_tracking = prev_waypoint is not None and prev_waypoint.look_at is not None
-            curr_is_tracking = wp.look_at is not None
-            
-            if curr_is_tracking:
-                # Enable tracking: transition constraint influence from 0 to 1
-                self._setup_track_to(camera, wp.look_at, transition_start, wp.frame)
-            elif prev_was_tracking:
-                # Disable tracking: transition constraint influence from 1 to 0
-                self._set_constraint_influence(camera, constraint_name, transition_start, 1.0)
-                self._set_constraint_influence(camera, constraint_name, wp.frame, 0.0)
-            
-            # Set explicit rotation if provided (look_at takes precedence)
-            if wp.rotation is not None and not curr_is_tracking:
-                camera.rotation = wp.rotation
+                
+            # 3. Handle Rotation or tracking
+            if wp.look_at:
+                # Find the start frame for smooth transition
+                # If this is the first waypoint, use start_frame
+                # Otherwise, use the previous waypoint's frame
+                if i == 0:
+                    start_frame = self.start_frame
+                else:
+                    start_frame = self.waypoints[i - 1].frame
+                
+                # If previous waypoint didn't have look_at, ensure constraint is disabled at start_frame
+                if not previous_has_look_at and i > 0:
+                    self._disable_track_to(camera, start_frame)
+                
+                self._setup_track_to(camera, wp.look_at, start_frame, wp.frame)
+                previous_has_look_at = True
+            else:
+                # No look_at for this waypoint
+                # If previous waypoint had look_at, disable constraint at this frame first
+                if previous_has_look_at:
+                    self._disable_track_to(camera, wp.frame)
+                    # Ensure constraint is disabled before keyframing rotation
+                    con = camera.obj.constraints.get(constraint_name)
+                    if con:
+                        con.influence = 0.0
+                
+                # Explicitly set and keyframe rotation
+                if wp.rotation is not None:
+                    camera.rotation = wp.rotation
+                # Always keyframe rotation to ensure smooth transitions
+                # This preserves the current rotation if not explicitly set
                 camera.keyframe("rotation_euler", frame=wp.frame, interpolation=self.interpolation)
-            
-            prev_waypoint = wp
+                previous_has_look_at = False
