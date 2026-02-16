@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marionette"
+version = "0.1.0"
+description = "Custom Blender automation utilities"
+dependencies = [
+    "tqdm",
+    "pydantic"
+]
+
+[tool.setuptools]
+# This tells python to look for the folder named 'marionette' 
+# in the same directory as this pyproject.toml file.
+packages = ["src.marionette"]

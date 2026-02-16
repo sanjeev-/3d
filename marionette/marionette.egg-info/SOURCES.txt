@@ -1,0 +1,10 @@
+pyproject.toml
+marionette.egg-info/PKG-INFO
+marionette.egg-info/SOURCES.txt
+marionette.egg-info/dependency_links.txt
+marionette.egg-info/requires.txt
+marionette.egg-info/top_level.txt
+src/marionette/__init__.py
+src/marionette/camera.py
+src/marionette/render.py
+src/marionette/scene.py
