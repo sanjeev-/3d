@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+src/marionette/__init__.py
+src/marionette/cli.py
+src/marionette.egg-info/PKG-INFO
+src/marionette.egg-info/SOURCES.txt
+src/marionette.egg-info/dependency_links.txt
+src/marionette.egg-info/entry_points.txt
+src/marionette.egg-info/requires.txt
+src/marionette.egg-info/top_level.txt
