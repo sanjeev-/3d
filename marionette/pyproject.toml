@@ -29,6 +29,8 @@ dependencies = [
     "modal>=0.63.0",
     "pydantic>=2.0.0",
     "pyyaml>=6.0",
+    "click>=8.0.0",
+    "rich>=13.0.0",
 ]
 
 [project.optional-dependencies]
@@ -38,10 +40,8 @@ dev = [
     "ruff>=0.1.0",
 ]
 
-cli = [
-    "click>=8.0",
-    "rich>=13.0",
-]
+[project.scripts]
+marionette = "marionette.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/yourusername/marionette"
