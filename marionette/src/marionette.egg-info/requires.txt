@@ -1,0 +1,9 @@
+click>=8.0.0
+rich>=13.0.0
+pyyaml>=6.0
+modal>=0.55.0
+
+[dev]
+pytest>=7.0.0
+black>=22.0.0
+ruff>=0.1.0

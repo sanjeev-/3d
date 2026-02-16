@@ -1,0 +1,2 @@
+[console_scripts]
+marionette = marionette.cli:main
