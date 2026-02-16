@@ -8,16 +8,13 @@ Cloud GPU rendering for Blender projects using [Modal](https://modal.com).
 - **Parallel Rendering**: Distribute frames across multiple containers for faster rendering
 - **Blender 3.6+ Support**: Uses latest Blender LTS with Cycles GPU rendering
 - **Easy Integration**: Drop-in replacement for local rendering workflows
+- **CLI Support**: Command-line interface for both local and cloud rendering
 
 ## Installation
 
 ```bash
-pip install -e marionette
-```
-
-For CLI support:
-```bash
-pip install -e "marionette[cli]"
+cd marionette
+pip install -e .
 ```
 
 ## Quick Start
@@ -52,15 +49,42 @@ results = render_frames_remote(
 )
 ```
 
-### CLI (Coming Soon)
+### CLI
 
 ```bash
-# Render using Modal cloud GPUs
-marionette render scene.blend --modal --frames 1-100 --gpu-type A10G
+# Local rendering with preview preset
+marionette render --local --blend-file scene.blend --frames 1-120 --preset preview
 
-# Render locally (default)
-marionette render scene.blend --frames 1-100
+# Cloud rendering with high quality preset on A100 GPU
+marionette render --modal --blend-file scene.blend --frames 1-120 --preset high_quality --gpu-type A100
+
+# Render specific frames only
+marionette render --local --blend-file scene.blend --frames "1,10,20,30"
 ```
+
+## Commands
+
+### `marionette render`
+
+Render Blender scenes locally or on Modal cloud infrastructure.
+
+**Options:**
+
+- `--modal/--local` - Use Modal cloud rendering or local rendering (default: local)
+- `--frames TEXT` - Frame range to render (e.g., "1-120" or "1,5,10") [default: 1-10]
+- `--preset TEXT` - Render quality preset: preview, medium, high_quality, final [default: preview]
+- `--gpu-type [A10G|A100]` - GPU type for Modal cloud rendering [default: A10G]
+- `--blend-file PATH` - Path to the .blend file to render [required]
+- `--output-dir PATH` - Output directory for rendered frames [default: ./output]
+
+## Render Presets
+
+Presets are loaded from `config/render_presets.yaml`:
+
+- **preview** - Fast preview (32 samples, 50% resolution)
+- **medium** - Balanced quality (128 samples)
+- **high_quality** - High quality (512 samples)
+- **final** - Maximum quality (1024 samples)
 
 ## Architecture
 
@@ -71,11 +95,20 @@ Marionette creates a Modal app with:
 - **Distributed Rendering**: Frames are distributed across parallel containers
 - **File Transfer**: Automatic upload/download of .blend files and rendered frames
 
+## Development Status
+
+This is part of a multi-ticket implementation:
+
+- ✅ Ticket #1-2: Modal rendering module (completed)
+- ✅ **Ticket #3: CLI foundation** (completed)
+- 🚧 Ticket #4: Rich UI for progress tracking (planned)
+- 🚧 Ticket #5: Integration with existing Renderer (planned)
+
 ## Development
 
 ```bash
 # Install in development mode with dev dependencies
-pip install -e "marionette[dev,cli]"
+pip install -e "marionette[dev]"
 
 # Run tests
 pytest
@@ -83,6 +116,15 @@ pytest
 # Format code
 black src/
 ```
+
+## Requirements
+
+- Python 3.9+
+- modal >= 0.63.0
+- pydantic >= 2.0.0
+- pyyaml >= 6.0
+- click >= 8.0.0
+- rich >= 13.0.0
 
 ## License
 
