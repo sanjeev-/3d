@@ -281,11 +281,11 @@ def render_frames_remote(
     """
     Render multiple frames on Modal cloud infrastructure.
 
-    This is a stub function that will be fully implemented in the next task.
-    It will handle:
-    - Uploading the .blend file to Modal
-    - Distributing frames across parallel containers
-    - Downloading rendered frames back to local storage
+    This function orchestrates the complete remote rendering workflow:
+    1. Uploads the .blend file (reads into memory as bytes)
+    2. Distributes frames across parallel Modal containers
+    3. Launches rendering jobs using the render_single_frame function
+    4. Downloads rendered frames back to local output directory
 
     Args:
         blend_file: Path to the .blend file
@@ -295,10 +295,153 @@ def render_frames_remote(
         gpu_type: GPU type to use (A10G, A100, etc.)
 
     Returns:
-        Dictionary with render results and statistics
+        Dictionary with render results and statistics including:
+            - status: "success", "partial_failure", or "error"
+            - frames_rendered: Number of successfully rendered frames
+            - total_time: Total rendering time in seconds
+            - output_dir: Path to output directory
+            - failed_frames: List of frame numbers that failed (if any)
     """
-    # This will be implemented in task #2
-    raise NotImplementedError(
-        "Remote frame rendering will be implemented in task #2. "
-        "This task only sets up the Modal container and render function."
-    )
+    import time
+
+    blend_path = Path(blend_file)
+    if not blend_path.exists():
+        return {
+            "status": "error",
+            "error": f"Blend file not found: {blend_file}",
+            "frames_rendered": 0,
+        }
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    print(f"Starting remote render job")
+    print(f"Blend file: {blend_file}")
+    print(f"Frames: {len(frames)} frames")
+    print(f"GPU type: {gpu_type}")
+    print(f"Output directory: {output_dir}")
+
+    start_time = time.time()
+
+    # Step 1: Upload blend file (read into memory)
+    print(f"\n[1/3] Loading .blend file...")
+    try:
+        with open(blend_path, "rb") as f:
+            blend_file_data = f.read()
+        print(f"✓ Loaded {len(blend_file_data)} bytes")
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": f"Failed to read blend file: {str(e)}",
+            "frames_rendered": 0,
+        }
+
+    # Prepare default render config
+    config = render_config or {}
+
+    # Step 2: Distribute frames across parallel containers and launch render jobs
+    print(f"\n[2/3] Distributing {len(frames)} frames across parallel containers...")
+    print(f"Launching render jobs on Modal with {gpu_type} GPUs...")
+
+    try:
+        # Prepare render tasks for all frames
+        render_tasks = [
+            (
+                frame_num,
+                blend_file_data,
+                f"frame_{frame_num:04d}.png",
+                config,
+            )
+            for frame_num in frames
+        ]
+
+        # Execute rendering in parallel using Modal's starmap
+        # This distributes the frames across available containers
+        with app.run():
+            # Configure GPU type for this run
+            render_fn = render_single_frame
+            if gpu_type != "A10G":
+                # Create a new function with different GPU if needed
+                render_fn = modal.Function.from_name(
+                    app, "render_single_frame"
+                ).with_options(gpu=gpu_type)
+
+            results = list(render_fn.starmap(render_tasks))
+
+        # Analyze results
+        successful_frames = [r for r in results if r.get("success")]
+        failed_frames = [r for r in results if not r.get("success")]
+
+        print(f"✓ Rendering completed: {len(successful_frames)} successful, {len(failed_frames)} failed")
+
+        if failed_frames:
+            print("\nFailed frames:")
+            for failed in failed_frames[:5]:  # Show first 5 failures
+                print(f"  Frame {failed['frame_number']}: {failed.get('error', 'Unknown error')}")
+            if len(failed_frames) > 5:
+                print(f"  ... and {len(failed_frames) - 5} more")
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": f"Failed to execute render jobs: {str(e)}",
+            "frames_rendered": 0,
+        }
+
+    # Step 3: Download rendered frames to local output directory
+    print(f"\n[3/3] Downloading rendered frames to {output_dir}...")
+    downloaded_files = []
+
+    for result in successful_frames:
+        try:
+            frame_num = result["frame_number"]
+            frame_data = result["output_data"]
+
+            if frame_data:
+                # Write frame to output directory
+                output_file = output_path / f"frame_{frame_num:04d}.png"
+                with open(output_file, "wb") as f:
+                    f.write(frame_data)
+                downloaded_files.append(output_file)
+        except Exception as e:
+            print(f"Warning: Failed to save frame {result.get('frame_number')}: {e}")
+            continue
+
+    print(f"✓ Downloaded {len(downloaded_files)} frames")
+
+    # Calculate total time
+    total_time = time.time() - start_time
+
+    # Determine final status
+    if failed_frames:
+        status = "partial_failure" if successful_frames else "error"
+    else:
+        status = "success"
+
+    print(f"\n{'='*60}")
+    print(f"Render completed!")
+    print(f"Status: {status}")
+    print(f"Successfully rendered: {len(downloaded_files)} frames")
+    if failed_frames:
+        print(f"Failed frames: {len(failed_frames)}")
+    print(f"Total time: {total_time:.2f}s")
+    print(f"Average time per frame: {total_time/len(frames):.2f}s")
+    print(f"Output directory: {output_dir}")
+    print(f"{'='*60}\n")
+
+    result_dict = {
+        "status": status,
+        "frames_rendered": len(downloaded_files),
+        "total_time": total_time,
+        "output_dir": str(output_dir),
+        "downloaded_files": [str(f) for f in downloaded_files],
+    }
+
+    if failed_frames:
+        result_dict["failed_frames"] = [f["frame_number"] for f in failed_frames]
+        result_dict["errors"] = {
+            f["frame_number"]: f.get("error", "Unknown error")
+            for f in failed_frames
+        }
+
+    return result_dict
