@@ -3,12 +3,14 @@
 import pytest
 
 from marionette.looks import (
+    BPY_UNAVAILABLE,
     STAGES,
     CelParams,
     Look,
     LookContext,
     LookPipeline,
     LookRequirements,
+    LookValidationError,
     available_looks,
     bridget_preset,
     get_look,
@@ -178,11 +180,27 @@ class TestPipeline:
         with pytest.raises(ValueError, match="unknown stage"):
             LookPipeline(get_look("pbr"), skip=("not_a_stage",))
 
-    def test_outside_blender_reports_rather_than_crashing(self):
-        result = LookPipeline(get_look("pbr")).apply(strict=True)
+    def test_outside_blender_reports_rather_than_crashing(self, monkeypatch):
+        # Deterministic regardless of whether bpy is installed: assert the
+        # pipeline's handling of the sentinel, not the interpreter's contents.
+        look = get_look("pbr")
+        monkeypatch.setattr(look, "validate", lambda scene=None: [BPY_UNAVAILABLE])
+        result = LookPipeline(look).apply(strict=True)
         assert result.stages_run == []
         assert result.stages_skipped == list(STAGES)
-        assert any("bpy unavailable" in w for w in result.warnings)
+        assert result.warnings == [BPY_UNAVAILABLE]
+
+    def test_real_validation_failures_still_raise_in_strict_mode(self, monkeypatch):
+        # A bare Look has no-op stages, so this exercises validation alone and
+        # stays runnable on interpreters without bpy.
+        look = Look()
+        monkeypatch.setattr(look, "validate", lambda scene=None: ["engine is wrong"])
+        with pytest.raises(LookValidationError, match="engine is wrong"):
+            LookPipeline(look).apply(strict=True)
+        # Non-strict runs report the problem and continue.
+        result = LookPipeline(look).apply(strict=False)
+        assert result.warnings == ["engine is wrong"]
+        assert result.stages_run == list(STAGES)
 
     def test_context_reports_unmatched_roles_as_empty(self):
         ctx = LookContext()

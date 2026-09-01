@@ -26,6 +26,11 @@ STAGES: Tuple[str, ...] = (
 )
 
 
+#: Reported by :meth:`Look.validate` when running outside Blender entirely.
+#: The pipeline treats this as "nothing to configure" rather than a failure.
+BPY_UNAVAILABLE = "bpy unavailable — cannot validate outside Blender"
+
+
 class LookValidationError(RuntimeError):
     """Raised when a scene cannot support the requested look."""
 
@@ -106,7 +111,7 @@ class Look(ABC):
         try:
             import bpy  # noqa: PLC0415
         except ImportError:
-            return ["bpy unavailable — cannot validate outside Blender"]
+            return [BPY_UNAVAILABLE]
 
         target = scene or bpy.context.scene
 
@@ -168,7 +173,7 @@ class LookPipeline:
         problems = self.look.validate(scene)
         # Outside Blender there is nothing to configure; surface it as a warning
         # rather than a hard failure so specs stay inspectable in plain pytest.
-        outside_blender = problems == ["bpy unavailable — cannot validate outside Blender"]
+        outside_blender = problems == [BPY_UNAVAILABLE]
         if problems and strict and not outside_blender:
             raise LookValidationError(
                 f"look {self.look.name!r} cannot run:\n  - " + "\n  - ".join(problems)

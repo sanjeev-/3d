@@ -1,7 +1,16 @@
-"""Keep bpy-only suites out of plain pytest runs.
+"""Shared fixtures.
 
-Tests under tests/blender/ need Blender's interpreter. Everything else in this
-package is pure and runs in the project venv.
+Tests under tests/blender/ need ``bpy``. It is now installable from PyPI
+(``pip install bpy==5.1.1``) on Python 3.13, so those tests run in ordinary
+pytest. On an interpreter without bpy they skip rather than fail.
 """
 
-collect_ignore_glob = ["blender/*"]
+import pytest
+
+
+@pytest.fixture
+def blender_scene():
+    """An empty Blender scene, reset for each test that asks for one."""
+    bpy = pytest.importorskip("bpy")
+    bpy.ops.wm.read_homefile(use_empty=True)
+    return bpy.context.scene
