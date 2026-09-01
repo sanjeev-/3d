@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from abc import ABC, abstractmethod
 from typing import List, Optional, Tuple
 from .camera import Camera
+from .mixins import set_fcurve_interpolation
 from .types import Interpolation
 
 class Waypoint(BaseModel):
@@ -73,11 +74,12 @@ class CameraMovement(ABC):
             return
         
         data_path = f'constraints["{constraint_name}"].influence'
-        for fcurve in camera.obj.animation_data.action.fcurves:
-            if fcurve.data_path == data_path:
-                for kp in fcurve.keyframe_points:
-                    if kp.co.x == start_frame or kp.co.x == end_frame:
-                        kp.interpolation = self.interpolation.value
+        set_fcurve_interpolation(
+            camera.obj.animation_data.action,
+            data_path,
+            self.interpolation,
+            frames={start_frame, end_frame},
+        )
     
     def _disable_track_to(self, camera: Camera, frame: int):
         """Disable the Track To constraint at a specific frame."""
@@ -91,12 +93,12 @@ class CameraMovement(ABC):
             )
             # Apply interpolation
             if camera.obj.animation_data and camera.obj.animation_data.action:
-                data_path = f'constraints["{constraint_name}"].influence'
-                for fcurve in camera.obj.animation_data.action.fcurves:
-                    if fcurve.data_path == data_path:
-                        for kp in fcurve.keyframe_points:
-                            if kp.co.x == frame:
-                                kp.interpolation = self.interpolation.value
+                set_fcurve_interpolation(
+                    camera.obj.animation_data.action,
+                    f'constraints["{constraint_name}"].influence',
+                    self.interpolation,
+                    frames={frame},
+                )
 
 class DollyMovement(CameraMovement):
     """Moves camera from point A to point B."""
