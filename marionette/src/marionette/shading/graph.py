@@ -191,8 +191,14 @@ class NodeGraph:
 
     # -- realization (bpy) --------------------------------------------------
 
-    def build(self, tree) -> Dict[str, Any]:
+    def build(self, tree, clear_others: bool = False) -> Dict[str, Any]:
         """Realize this graph onto ``tree``, replacing anything it owned before.
+
+        Args:
+            clear_others: Also remove nodes this graph neither owns nor adopts.
+                Use when the graph defines the tree's entire output — otherwise
+                a pre-existing shader is merely disconnected, not removed, and
+                lingers as a confusing orphan.
 
         Returns a mapping of node key -> created/adopted bpy node.
         """
@@ -244,6 +250,12 @@ class NodeGraph:
             for socket_key, value in spec.inputs.items():
                 socket = _resolve_socket(built[key], socket_key, False, key)
                 socket.default_value = value() if callable(value) else value
+
+        if clear_others:
+            keep = {node.as_pointer() for node in built.values()}
+            for node in list(nodes):
+                if node.as_pointer() not in keep:
+                    nodes.remove(node)
 
         for link in self._links:
             src = _resolve_socket(built[link.src.node_key], link.src.socket, True, link.src.node_key)

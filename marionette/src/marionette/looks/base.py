@@ -104,15 +104,45 @@ class Look(ABC):
     # -- validation ---------------------------------------------------------
 
     def validate(self, scene=None) -> List[str]:
-        """Return a list of unmet requirements. Empty means good to go."""
-        problems: List[str] = []
-        req = self.requirements
+        """Preconditions the look cannot fix for itself. Empty means good to go.
 
+        Only things outside the look's control belong here — a missing addon or
+        node group. Engine and view transform are deliberately NOT preconditions:
+        ``configure_render`` sets them, so checking beforehand would make a look
+        that fixes a scene refuse to run on that scene. They are postconditions,
+        checked by :meth:`verify`.
+        """
         try:
             import bpy  # noqa: PLC0415
         except ImportError:
             return [BPY_UNAVAILABLE]
 
+        problems: List[str] = []
+        req = self.requirements
+
+        for addon in req.addons:
+            if addon not in bpy.context.preferences.addons:
+                problems.append(f"required addon {addon!r} is not enabled")
+        for group in req.node_groups:
+            if group not in bpy.data.node_groups:
+                problems.append(f"required node group {group!r} not found in this blend file")
+        return problems
+
+    def verify(self, scene=None) -> List[str]:
+        """Postconditions, checked after the stages have run.
+
+        These are settings the look configures itself, so a failure means the
+        scene will render wrong — usually because ``configure_render`` was
+        skipped. Catching it matters: a cel look rendered through AgX yields a
+        plausible image that is quietly not the intended look.
+        """
+        try:
+            import bpy  # noqa: PLC0415
+        except ImportError:
+            return [BPY_UNAVAILABLE]
+
+        problems: List[str] = []
+        req = self.requirements
         target = scene or bpy.context.scene
 
         if req.engine and target.render.engine != req.engine:
@@ -124,12 +154,6 @@ class Look(ABC):
                 f"view transform is {target.view_settings.view_transform!r}, "
                 f"look {self.name!r} requires {req.view_transform!r}"
             )
-        for addon in req.addons:
-            if addon not in bpy.context.preferences.addons:
-                problems.append(f"required addon {addon!r} is not enabled")
-        for group in req.node_groups:
-            if group not in bpy.data.node_groups:
-                problems.append(f"required node group {group!r} not found in this blend file")
         return problems
 
     def default_roles(self) -> RoleMap:
@@ -196,5 +220,14 @@ class LookPipeline:
                 continue
             getattr(self.look, stage)(scene, ctx)
             result.stages_run.append(stage)
+
+        unmet = self.look.verify(scene)
+        if unmet and unmet != [BPY_UNAVAILABLE]:
+            if strict:
+                raise LookValidationError(
+                    f"look {self.look.name!r} did not reach its required state:\n  - "
+                    + "\n  - ".join(unmet)
+                )
+            result.warnings.extend(unmet)
 
         return result

@@ -15,6 +15,7 @@ from .params import CelParams, PBRParams, bridget_preset, zen_preset
 from .registry import available_looks, get_look, look_class, register_look
 
 # Importing concrete looks populates the registry.
+from .cel import CelLook  # noqa: E402,F401
 from .pbr import PBRLook, StudioLook  # noqa: E402,F401
 
 __all__ = [
@@ -22,5 +23,5 @@ __all__ = [
     "LookResult", "LookValidationError",
     "CelParams", "PBRParams", "zen_preset", "bridget_preset",
     "register_look", "get_look", "look_class", "available_looks",
-    "PBRLook", "StudioLook",
+    "CelLook", "PBRLook", "StudioLook",
 ]

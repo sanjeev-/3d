@@ -47,10 +47,31 @@ git clone <your-repo-url>
 cd blender-movies
 ```
 
-2. Install dependencies:
+2. Create the virtual environment and install dependencies:
 ```bash
-pip install -r requirements.txt
+/opt/homebrew/bin/python3.13 -m venv .venv313
+.venv313/bin/pip install -e marionette/ bpy==5.1.1 pytest
+.venv313/bin/pip install -r requirements.txt
 ```
+
+> **Use `.venv313`. The old `py310-3d` environment is deprecated.**
+>
+> Despite its name, `py310-3d` runs Python 3.9, and `bpy` publishes no wheel
+> for 3.9 — so `bpy>=3.6.0` in `requirements.txt` was never actually
+> installable there. The project now targets **Python 3.13**, which is also
+> the version Blender 5.1 bundles.
+>
+> Two things follow from that:
+>
+> - `bpy` installs from PyPI, so scripts that drive Blender run directly:
+>   `.venv313/bin/python my_script.py` instead of
+>   `blender --background --python my_script.py`.
+> - One set of packages serves both the venv and Blender's own interpreter,
+>   since they share an ABI. Previously pydantic had to be installed twice.
+>
+> Keep `bpy` pinned to the same version as the Blender you render with
+> (currently 5.1.1) — a `.blend` written by a newer Blender will not open in
+> an older `bpy`.
 
 3. (Optional) Set up Git LFS for large files:
 ```bash
@@ -247,8 +268,21 @@ You can write custom Python scripts that run inside Blender to set up scenes, cr
 
 Run a custom script:
 ```bash
+# Preferred: bpy is importable, so no Blender launch is needed.
+.venv313/bin/python my_script.py
+
+# Still works, and is required for anything that needs Blender's UI or addons:
 blender --background scene.blend --python my_script.py
 ```
+
+### Tests
+
+```bash
+.venv313/bin/python -m pytest marionette/tests/
+```
+
+Tests under `marionette/tests/blender/` need `bpy`; they skip automatically on
+an interpreter that lacks it rather than failing.
 
 ## Git LFS Setup
 

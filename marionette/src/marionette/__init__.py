@@ -41,6 +41,7 @@ from .shading import (
     anime_character_roles,
 )
 from .looks import (
+    CelLook,
     CelParams,
     Look,
     LookContext,
@@ -121,7 +122,7 @@ __all__ = [
     "anime_character_roles",
     # looks
     "Look", "LookPipeline", "LookContext", "LookParams", "LookRequirements",
-    "LookValidationError", "PBRLook", "StudioLook",
+    "LookValidationError", "CelLook", "PBRLook", "StudioLook",
     "CelParams", "PBRParams", "zen_preset", "bridget_preset",
     "register_look", "get_look", "available_looks",
 ]
