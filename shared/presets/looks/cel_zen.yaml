@@ -1,0 +1,25 @@
+# Default cel preset — the "zen" configuration.
+#
+# Purely geometric half-lambert with a hard terminator, no painted control data,
+# specular disabled, flat base colors, and very subtle rim separation. Renders
+# with no addons, AOVs, or compositor.
+name: cel_zen
+look: cel
+params:
+  light_push: 1.0            # 1.0 => exact half-lambert
+  shadow_push: 0.5           # terminator at the geometric horizon (N·L >= 0)
+  shadow_smoothness: 0.0     # hard cel edge
+  shadow_vertex_threshold: 0.5
+  shadow2_push: -1.0         # second shadow band disabled
+  shadow2_smoothness: 0.0
+  shadow2_vertex_threshold: 0.1
+  permanent_shadow_threshold: 0.2
+  specular_size: 0.0         # specular off entirely
+  specular_intensity: 1.0
+  rim_size: 0.2
+  rim_intensity: 0.1
+  shadow_rim_size: 0.2
+  shadow_rim_intensity: 0.1
+  use_offset_map: false      # no painted ILM offsets
+  use_vertex_shadow_mask: false
+  light_direction: [45.0, -35.0, 0.0]

@@ -1,7 +1,7 @@
 import bpy
 import math
 from typing import Tuple, Union
-from .mixins import Animatable
+from .mixins import Animatable, set_fcurve_interpolation
 from .configs import CharacterConfig
 from .types import Interpolation, BoneTransformType
 
@@ -132,9 +132,7 @@ class Character(Animatable):
         """Internal helper to set interpolation on bone F-Curves."""
         if not self.armature.animation_data or not self.armature.animation_data.action:
             return
-        
-        for fcurve in self.armature.animation_data.action.fcurves:
-            if fcurve.data_path == data_path:
-                for kp in fcurve.keyframe_points:
-                    if kp.co.x == frame:
-                        kp.interpolation = interpolation.value
+
+        set_fcurve_interpolation(
+            self.armature.animation_data.action, data_path, interpolation, frames={frame}
+        )

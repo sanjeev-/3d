@@ -1,11 +1,14 @@
 import math
 import bpy
 import os
+from typing import List, Optional
 from .character import Character
 from .configs import CharacterConfig
 from .camera import Camera, CameraConfig
 from .camera_movements import CameraMovement
-from .configs import HDRIConfig
+from .configs import HDRIConfig, LightConfig
+from .lighting import Light
+from .rigs import HDRIRig, LightRig, SceneBounds
 
 class Scene:
     def __init__(self, filepath=None):
@@ -52,73 +55,29 @@ class Scene:
         for d in prefs.get_devices_for_type('METAL'):
             d.use = True
 
+    def add_light(self, config: LightConfig) -> Light:
+        """Create a light from a config, link it to the scene, and return the wrapper."""
+        return Light.create(config)
+
+    def apply_rig(self, rig: LightRig, bounds: Optional[SceneBounds] = None) -> List[Light]:
+        """Apply a LightRig to this scene. Returns the lights it created."""
+        return rig.apply(self.scene, bounds=bounds)
+
     def set_hdri(self, config: HDRIConfig):
-        """
-        Sets an HDRI environment map for the scene using the provided configuration.
-        
+        """Set an HDRI environment map for the scene.
+
+        Delegates to :class:`~marionette.rigs.HDRIRig`, which builds the world
+        node tree through the declarative NodeGraph builder. Rebuilding is
+        idempotent: re-applying replaces the previously built nodes instead of
+        accumulating duplicates.
+
         Args:
             config: HDRIConfig containing path, strength, and rotation settings
-        
+
         Raises:
             FileNotFoundError: If the HDRI file doesn't exist
         """
-        if not os.path.exists(config.path):
-            raise FileNotFoundError(f"HDRI file not found: {config.path}")
-        
-        world = self.scene.world
-        if not world:
-            world = bpy.data.worlds.new("World")
-            self.scene.world = world
-        
-        # Enable nodes
-        world.use_nodes = True
-        nodes = world.node_tree.nodes
-        links = world.node_tree.links
-        
-        # Get or create Background node
-        bg_node = nodes.get("Background")
-        if not bg_node:
-            bg_node = nodes.new(type='ShaderNodeBackground')
-        
-        # Get or create Environment Texture node
-        env_node = nodes.get("Environment Texture")
-        if not env_node:
-            env_node = nodes.new(type='ShaderNodeTexEnvironment')
-        
-        # Load HDRI image
-        env_image = bpy.data.images.load(config.path)
-        env_node.image = env_image
-        
-        # Set rotation (via Mapping node)
-        mapping_node = nodes.get("Mapping")
-        if not mapping_node:
-            mapping_node = nodes.new(type='ShaderNodeMapping')
-        
-        mapping_node.inputs['Rotation'].default_value[2] = math.radians(config.rotation)
-        
-        # Set strength
-        bg_node.inputs['Strength'].default_value = config.strength
-        
-        # Get or create World Output node
-        output_node = nodes.get("World Output")
-        if not output_node:
-            output_node = nodes.new(type='ShaderNodeOutputWorld')
-        
-        # Connect nodes: Mapping -> Environment Texture -> Background -> World Output
-        # Clear existing connections to avoid duplicates
-        if env_node.inputs['Vector'].links:
-            links.remove(env_node.inputs['Vector'].links[0])
-        links.new(mapping_node.outputs['Vector'], env_node.inputs['Vector'])
-        
-        if bg_node.inputs['Color'].links:
-            links.remove(bg_node.inputs['Color'].links[0])
-        links.new(env_node.outputs['Color'], bg_node.inputs['Color'])
-        
-        if output_node.inputs['Surface'].links:
-            links.remove(output_node.inputs['Surface'].links[0])
-        links.new(bg_node.outputs['Background'], output_node.inputs['Surface'])
-
-
+        HDRIRig(config).apply(self.scene)
 
     def add_character(self, config: CharacterConfig) -> Character:
         """

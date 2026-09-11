@@ -1,6 +1,7 @@
 # Core dependencies
 pyyaml>=6.0
-bpy>=3.6.0  # Blender as a Python module (optional, for headless rendering)
+bpy==5.1.1  # Blender as a Python module; wheels are Python 3.13 only.
+            # Must match the Blender build you render with.
 
 # Video processing
 ffmpeg-python>=0.2.0

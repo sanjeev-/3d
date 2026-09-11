@@ -8,6 +8,8 @@ env/
 venv/
 ENV/
 .venv
+.venv*/
+py310-3d/
 
 # Blender
 *.blend1
